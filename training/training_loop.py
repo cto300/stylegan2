@@ -138,6 +138,10 @@ def training_loop(
 
     if resume_pkl is None and 'RESUME_PKL' in os.environ:
         resume_pkl = os.environ['RESUME_PKL']
+    if resume_kimg <= 0.0 and 'RESUME_KIMG' in os.environ:
+        resume_kimg = float(os.environ['RESUME_KIMG'])
+    if resume_time <= 0.0 and 'RESUME_TIME' in os.environ:
+        resume_time = float(os.environ['RESUME_TIME'])
 
     # Initialize dnnlib and TensorFlow.
     tflib.init_tf(tf_config)
