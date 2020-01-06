@@ -9,6 +9,7 @@
 import os
 import numpy as np
 import tensorflow as tf
+import tflex
 import dnnlib
 import dnnlib.tflib as tflib
 
@@ -42,13 +43,13 @@ class DistanceBlock():
         self.num_gpus = num_gpus
 
         # Initialize TF graph to calculate pairwise distances.
-        with tf.device('/cpu:0'):
+        with tflex.device('/cpu:0'):
             self._features_batch1 = tf.placeholder(tf.float16, shape=[None, self.num_features])
             self._features_batch2 = tf.placeholder(tf.float16, shape=[None, self.num_features])
             features_split2 = tf.split(self._features_batch2, self.num_gpus, axis=0)
             distances_split = []
             for gpu_idx in range(self.num_gpus):
-                with tf.device('/gpu:%d' % gpu_idx):
+                with tflex.device('/gpu:%d' % gpu_idx):
                     distances_split.append(batch_pairwise_distances(self._features_batch1, features_split2[gpu_idx]))
             self._distance_block = tf.concat(distances_split, axis=1)
 
@@ -199,7 +200,7 @@ class PR(metric_base.MetricBase):
         # Construct TensorFlow graph.
         result_expr = []
         for gpu_idx in range(num_gpus):
-            with tf.device('/gpu:%d' % gpu_idx):
+            with tflex.device('/gpu:%d' % gpu_idx):
                 Gs_clone = Gs.clone()
                 feature_net_clone = feature_net.clone()
                 latents = tf.random_normal([self.minibatch_per_gpu] + Gs_clone.input_shape[1:])

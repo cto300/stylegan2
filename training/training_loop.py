@@ -8,6 +8,7 @@
 
 import numpy as np
 import tensorflow as tf
+import tflex
 import dnnlib
 import dnnlib.tflib as tflib
 from dnnlib.tflib.autosummary import autosummary
@@ -143,7 +144,7 @@ def training_loop(
     misc.save_image_grid(grid_reals, dnnlib.make_run_dir_path('reals.png'), drange=training_set.dynamic_range, grid_size=grid_size)
 
     # Construct or load networks.
-    with tf.device('/gpu:0'):
+    with tflex.device('/gpu:0'):
         if resume_pkl is None or resume_with_new_nets:
             print('Constructing networks...')
             G = tflib.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **G_args)
@@ -164,7 +165,7 @@ def training_loop(
 
     # Setup training inputs.
     print('Building TensorFlow graph...')
-    with tf.name_scope('Inputs'), tf.device('/cpu:0'):
+    with tf.name_scope('Inputs'), tflex.device('/cpu:0'):
         lod_in               = tf.placeholder(tf.float32, name='lod_in', shape=[])
         lrate_in             = tf.placeholder(tf.float32, name='lrate_in', shape=[])
         minibatch_size_in    = tf.placeholder(tf.int32, name='minibatch_size_in', shape=[])
@@ -191,7 +192,7 @@ def training_loop(
     # Build training graph for each GPU.
     data_fetch_ops = []
     for gpu in range(num_gpus):
-        with tf.name_scope('GPU%d' % gpu), tf.device('/gpu:%d' % gpu):
+        with tf.name_scope('GPU%d' % gpu), tflex.device('/gpu:%d' % gpu):
 
             # Create GPU-specific shadow copies of G and D.
             G_gpu = G if gpu == 0 else G.clone(G.name + '_shadow')
@@ -240,11 +241,14 @@ def training_loop(
     Gs_update_op = Gs.setup_as_moving_average_of(G, beta=Gs_beta)
 
     # Finalize graph.
-    with tf.device('/gpu:0'):
-        try:
-            peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
-        except tf.errors.NotFoundError:
-            peak_gpu_mem_op = tf.constant(0)
+    if tflex.has_gpu():
+        with tflex.device('/gpu:0'):
+            try:
+                peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
+            except tf.errors.NotFoundError:
+                peak_gpu_mem_op = tf.constant(0)
+    else:
+        peak_gpu_mem_op = None
     tflib.init_uninitialized_vars()
 
     print('Initializing logs...')
@@ -327,7 +331,7 @@ def training_loop(
                 autosummary('Timing/sec_per_tick', tick_time),
                 autosummary('Timing/sec_per_kimg', tick_time / tick_kimg),
                 autosummary('Timing/maintenance_sec', maintenance_time),
-                autosummary('Resources/peak_gpu_mem_gb', peak_gpu_mem_op.eval() / 2**30)))
+                autosummary('Resources/peak_gpu_mem_gb', (peak_gpu_mem_op.eval() if peak_gpu_mem_op is not None else 0) / 2**30)))
             autosummary('Timing/total_hours', total_time / (60.0 * 60.0))
             autosummary('Timing/total_days', total_time / (24.0 * 60.0 * 60.0))
 
