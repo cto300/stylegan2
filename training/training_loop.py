@@ -6,6 +6,7 @@
 
 """Main training script."""
 
+import os
 import numpy as np
 import tensorflow as tf
 import tflex
@@ -133,6 +134,9 @@ def training_loop(
     resume_kimg             = 0.0,      # Assumed training progress at the beginning. Affects reporting and training schedule.
     resume_time             = 0.0,      # Assumed wallclock time at the beginning. Affects reporting.
     resume_with_new_nets    = False):   # Construct new networks according to G_args and D_args before resuming training?
+
+    if resume_pkl is None and 'RESUME_PKL' in os.environ:
+        resume_pkl = os.environ['RESUME_PKL']
 
     # Initialize dnnlib and TensorFlow.
     tflib.init_tf(tf_config)
