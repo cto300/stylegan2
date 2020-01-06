@@ -9,6 +9,7 @@ import h5py
 import shutil
 import tempfile
 import traceback
+import time
 
 from tensorflow.contrib import tpu
 from tensorflow.contrib.cluster_resolver import TPUClusterResolver
@@ -37,7 +38,11 @@ def tuples(*args, **kws):
 class Namespace(object):
   pass
 
-state = Namespace()
+if 'state' not in globals():
+  state = Namespace()
+
+if not hasattr(state, 'noisy'):
+  state.noisy = 'NOISY' in os.environ
 
 def get_tpu_addr(tpu_name=None):
     # Get the TPU's location
@@ -57,6 +62,12 @@ def get_session_target(target='auto'):
       print("Using TPU %s" % target)
     return target
 
+def pretty(x, ellipsize=120):
+  r = str(x)
+  if len(r) > ellipsize:
+    return r[0:ellipsize - 3] + '...'
+  return r
+
 class Session(tf.Session):
   def __init__(self, target='auto', graph=None, config=None, init_tpu=False):
     target = get_session_target(target)
@@ -71,6 +82,17 @@ class Session(tf.Session):
       #sess.run(tpu.initialize_system())
       initialize_tpu(session=self, timeout_in_ms=20000)
       self.init_tpu = None
+
+  def run(self, *args, **kws):
+    if state.noisy:
+      print('Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+    start = time.time()
+    result = super(Session, self).run(*args, **kws)
+    elapsed = time.time() - start
+    if state.noisy:
+      print('Session.run (finished in %.2fs)' % elapsed, pretty(result), *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+    return result
+
 
 def split_by_params(vs, n=20e6, f=None):
   if f is None:
