@@ -22,8 +22,9 @@ def open_file_or_url(file_or_url):
         return dnnlib.util.open_url(file_or_url, cache_dir='.stylegan2-cache')
     return open(file_or_url, 'rb')
 
-def load_pkl(file_or_url):
-    with open_file_or_url(file_or_url) as file:
+def load_pkl(file_or_url, filename=None):
+    infile = filename if filename is not None and os.path.isfile(filename) else file_or_url
+    with open_file_or_url(infile) as file:
         return pickle.load(file, encoding='latin1')
 
 def save_pkl(obj, filename):
