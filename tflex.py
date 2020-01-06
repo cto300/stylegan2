@@ -44,6 +44,9 @@ if 'state' not in globals():
 if not hasattr(state, 'noisy'):
   state.noisy = 'NOISY' in os.environ
 
+if not hasattr(state, 'debug'):
+  state.debug = 'DEBUG' in os.environ
+
 def get_tpu_addr(tpu_name=None):
     # Get the TPU's location
     if tpu_name is not None:
@@ -84,6 +87,8 @@ class Session(tf.Session):
       self.init_tpu = None
 
   def run(self, *args, **kws):
+    if state.debug:
+      check_commands()
     if state.noisy:
       print('Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
     start = time.time()
