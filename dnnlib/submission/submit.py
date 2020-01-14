@@ -115,6 +115,8 @@ class SubmitConfig(util.EasyDict):
 
 def get_path_from_template(path_template: str, path_type: PathType = PathType.AUTO) -> str:
     """Replace tags in the given path template and return either Windows or Linux formatted path."""
+    if path_template.startswith('gs://'):
+      return path_template
     # automatically select path type depending on running OS
     if path_type == PathType.AUTO:
         if platform.system() == "Windows":
