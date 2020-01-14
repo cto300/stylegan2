@@ -57,7 +57,7 @@ class TFRecordDataset:
 
         # List tfrecords files and inspect their shapes.
         assert os.path.isdir(self.tfrecord_local_dir)
-        tfr_files = sorted(glob.glob(os.path.join(self.tfrecord_local_dir, '*.tfrecords')))
+        tfr_files = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_local_dir, '*.tfrecords')))
         assert len(tfr_files) >= 1
         tfr_shapes = []
         for tfr_file in tfr_files:
