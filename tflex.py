@@ -72,16 +72,21 @@ def pretty(x, ellipsize=120):
   return r
 
 class Session(tf.Session):
-  def __init__(self, target='auto', graph=None, config=None, init_tpu=False):
+  def __init__(self, target='auto', graph=None, config=None, init_tpu=False, id=None):
     target = get_session_target(target)
     super().__init__(target, graph=graph, config=config)
+    self.id = id
     self.init_tpu=init_tpu
     self.target = target
     self.config = config
 
+  @property
+  def _spec(self):
+    return '#%d' % self.id if self.id is not None else ''
+
   def ensure(self):
     if self.init_tpu:
-      print("Initializing TPU...")
+      print(self._spec, "Initializing TPU...")
       #sess.run(tpu.initialize_system())
       initialize_tpu(session=self, timeout_in_ms=20000)
       self.init_tpu = None
@@ -90,12 +95,12 @@ class Session(tf.Session):
     if state.debug:
       check_commands()
     if state.noisy:
-      print('Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+      print(self._spec, 'Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
     start = time.time()
     result = super(Session, self).run(*args, **kws)
     elapsed = time.time() - start
     if state.noisy:
-      print('Session.run (finished in %.2fs)' % elapsed, pretty(result), *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+      print(self._spec, 'Session.run (finished in %.2fs)' % elapsed, pretty(result), *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
     return result
 
 
@@ -635,6 +640,10 @@ def nullcontext(enter_result=None):
 
 _devices = None
 _has_gpu = False
+_override_device = False
+
+def set_override_device(value):
+  _override_device = value
 
 def has_gpu():
   global _devices
@@ -645,6 +654,8 @@ def has_gpu():
   return _has_gpu
 
 def device(name=''):
+  if _override_device:
+    return nullcontext()
   if name is None:
     return tf.device(None)
   if 'gpu' in name:
