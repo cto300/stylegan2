@@ -7,6 +7,7 @@
 """Multi-resolution input data pipeline."""
 
 import os
+import re
 import numpy as np
 import tensorflow as tf
 import tflex
@@ -55,22 +56,18 @@ class TFRecordDataset:
         assert gfile.IsDirectory(self.tfrecord_dir)
         tfr_files = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_dir, '*.tfrecords')))
         assert len(tfr_files) >= 1
-        tfr_shapes = []
-        for tfr_file in tfr_files:
-            tfr_opt = tf.python_io.TFRecordOptions(tf.python_io.TFRecordCompressionType.NONE)
-            for record in tf.python_io.tf_record_iterator(tfr_file, tfr_opt):
-                tfr_shapes.append(self.parse_tfrecord_np(record).shape)
-                break
 
-        # Autodetect label filename.
-        if self.label_file is None:
-            guess = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_dir, '*.labels')))
-            if len(guess):
-                self.label_file = guess[0]
-        elif not gfile.IsFile(self.label_file):
-            guess = os.path.join(self.tfrecord_dir, self.label_file)
-            if gfile.IsFile(guess):
-                self.label_file = guess
+        # To avoid parsing the entire dataset looking for the max
+        # resolution, just assume that we can extract the LOD level
+        # from the tfrecords file name.
+        tfr_shapes = []
+        lod = -1
+        for tfr_file in tfr_files:
+          match = re.match('.*([0-9]+).tfrecords', tfr_file)
+          if match:
+            level = int(match.group(1))
+            res = 2**level
+            tfr_shapes.append((3, res, res))
 
         # Determine shape and resolution.
         max_shape = max(tfr_shapes, key=np.prod)
