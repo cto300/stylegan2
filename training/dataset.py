@@ -7,15 +7,13 @@
 """Multi-resolution input data pipeline."""
 
 import os
-import glob
 import numpy as np
 import tensorflow as tf
 import tflex
 import dnnlib
 import dnnlib.tflib as tflib
 
-def dataset_prefix():
-    return os.environ['GCE_BUCKET'] if 'GCE_BUCKET' in os.environ else ''
+from tensorflow.python.platform import gfile
 
 #----------------------------------------------------------------------------
 # Dataset class that loads data from tfrecords files.
@@ -23,7 +21,6 @@ def dataset_prefix():
 class TFRecordDataset:
     def __init__(self,
         tfrecord_dir,               # Directory containing a collection of tfrecords files.
-        tfrecord_local_dir,         # Local directory containing a collection of tfrecords files.
         resolution      = None,     # Dataset resolution, None = autodetect.
         label_file      = None,     # Relative path of the labels file, None = autodetect.
         max_label_size  = 0,        # 0 = no labels, 'full' = full labels, <int> = N first label components.
@@ -35,7 +32,6 @@ class TFRecordDataset:
         num_threads     = 2):       # Number of concurrent threads.
 
         self.tfrecord_dir       = tfrecord_dir
-        self.tfrecord_local_dir = tfrecord_local_dir
         self.resolution         = None
         self.resolution_log2    = None
         self.shape              = []        # [channels, height, width]
@@ -56,8 +52,8 @@ class TFRecordDataset:
         self._cur_lod           = -1
 
         # List tfrecords files and inspect their shapes.
-        assert os.path.isdir(self.tfrecord_local_dir)
-        tfr_files = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_local_dir, '*.tfrecords')))
+        assert gfile.IsDirectory(self.tfrecord_dir)
+        tfr_files = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_dir, '*.tfrecords')))
         assert len(tfr_files) >= 1
         tfr_shapes = []
         for tfr_file in tfr_files:
@@ -68,12 +64,12 @@ class TFRecordDataset:
 
         # Autodetect label filename.
         if self.label_file is None:
-            guess = sorted(glob.glob(os.path.join(self.tfrecord_local_dir, '*.labels')))
+            guess = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_dir, '*.labels')))
             if len(guess):
                 self.label_file = guess[0]
-        elif not os.path.isfile(self.label_file):
-            guess = os.path.join(self.tfrecord_local_dir, self.label_file)
-            if os.path.isfile(guess):
+        elif not gfile.IsFile(self.label_file):
+            guess = os.path.join(self.tfrecord_dir, self.label_file)
+            if gfile.IsFile(guess):
                 self.label_file = guess
 
         # Determine shape and resolution.
@@ -108,7 +104,7 @@ class TFRecordDataset:
             for tfr_file, tfr_shape, tfr_lod in zip(tfr_files, tfr_shapes, tfr_lods):
                 if tfr_lod < 0:
                     continue
-                dset = tf.data.TFRecordDataset(os.path.join(dataset_prefix(), tfr_file), compression_type='', buffer_size=buffer_mb<<20)
+                dset = tf.data.TFRecordDataset(tfr_file, compression_type='', buffer_size=buffer_mb<<20)
                 if max_images is not None:
                     dset = dset.take(max_images)
                 dset = dset.map(self.parse_tfrecord_tf, num_parallel_calls=num_threads)
@@ -190,8 +186,7 @@ def load_dataset(class_name=None, data_dir=None, verbose=False, **kwargs):
         if class_name is None:
             class_name = __name__ + '.TFRecordDataset'
         if data_dir is not None:
-            kwargs['tfrecord_local_dir'] = os.path.join(data_dir, kwargs['tfrecord_dir'])
-            kwargs['tfrecord_dir'] = os.path.join(dataset_prefix(), data_dir, kwargs['tfrecord_dir'])
+            kwargs['tfrecord_dir'] = os.path.join(data_dir, kwargs['tfrecord_dir'])
 
     assert class_name is not None
     if verbose:
