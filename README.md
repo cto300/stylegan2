@@ -1,5 +1,6 @@
 ![Teaser image](./fake_art_portrait.jpg)
 
+* Conditional model trained on WikiArt images [now available for download](https://archive.org/details/wikiart-stylegan2-conditional-model)
 * conditional support originally from @davidstap
 * port of my encoder from @robertluxemburg
 * fp16 branch from @veqtor
