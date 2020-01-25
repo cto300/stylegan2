@@ -11,7 +11,7 @@ import sys
 
 import dnnlib
 from dnnlib import EasyDict
-
+from training import misc
 from metrics.metric_defaults import metric_defaults
 
 #----------------------------------------------------------------------------
@@ -45,17 +45,22 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     grid      = EasyDict(size='8k', layout='random')                           # Options for setup_snapshot_image_grid().
     sc        = dnnlib.SubmitConfig()                                          # Options for dnnlib.submit_run().
     tf_config = {'rnd.np_random_seed': 1000}                                   # Options for tflib.init_tf().
-
+    try:
+        pkl, kimg = misc.locate_latest_pkl(result_dir)
+        train.resume_pkl = pkl
+        train.resume_kimg = kimg
+    except:
+        print('Couldn\'t find valid snapshot, starting over')
     train.data_dir = data_dir
     train.total_kimg = total_kimg
     train.mirror_augment = mirror_augment
     train.mirror_augment_v = mirror_augment_v
     train.image_snapshot_ticks = 1
-    train.network_snapshot_ticks = 1
     sched.D_lrate_base = lr
     sched.G_lrate_base = 0.5 * sched.D_lrate_base # two time update rule enforced
-    sched.minibatch_size_base = 192
-    sched.minibatch_gpu_base = 3
+    train.network_snapshot_ticks = 1
+    sched.minibatch_size_base = 256
+    sched.minibatch_gpu_base = 4
     D_loss.gamma = 10
     metrics = [metric_defaults[x] for x in metrics]
     desc = 'stylegan2'
@@ -95,9 +100,9 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
         sched.G_lrate_base = sched.D_lrate_base = 0.001
         sched.G_lrate_dict = sched.D_lrate_dict = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
         sched.minibatch_size_base = 32 # (default)
-        sched.minibatch_size_dict = {8: 256, 16: 128, 32: 64, 64: 32}
+        sched.minibatch_size_dict = {8: 512, 16: 256, 32: 128, 64: 64, 128: 32}
         sched.minibatch_gpu_base = 4 # (default)
-        sched.minibatch_gpu_dict = {8: 32, 16: 16, 32: 8, 64: 4}
+        sched.minibatch_gpu_dict = {8: 64, 16: 32, 32: 16, 64: 8, 128: 4}
         G.synthesis_func = 'G_synthesis_stylegan_revised'
         D.func_name = 'training.networks_stylegan2.D_stylegan'
 
