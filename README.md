@@ -1,6 +1,11 @@
 ![Teaser image](./fake_art_portrait.jpg)
 
-**Various Improvements to make StyleGAN2 more suitible to be trained on Google Colab**
+* conditional support originally from @davidstap
+* port of my encoder from @robertluxemburg
+* fp16 branch from @veqtor
+* tpu and swarm branches from @shawwn
+
+**Various Improvements from skyflynil to make StyleGAN2 more suitible to be trained on Google Colab**
 * Supports Non-Square images, for example, 768x512, which basically as 6x4 (x2^7), or 640x384 as 5x3 (x2^7), etc.
 * Supports vertical mirror augmentation
 * Supports train from latest pkl automatically
