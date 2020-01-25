@@ -2,11 +2,12 @@
 
 import glob
 import os
-
-import dnnlib
-import dnnlib.tflib as tflib
+import re
 import numpy as np
 import tensorflow as tf
+import tflex
+import dnnlib
+import dnnlib.tflib as tflib
 
 # ----------------------------------------------------------------------------
 # Parse individual image from a tfrecords file.
@@ -58,6 +59,11 @@ def parse_tfrecord_np_raw(record):
     return shape
 
 # ----------------------------------------------------------------------------
+=======
+from tensorflow.python.platform import gfile
+
+#----------------------------------------------------------------------------
+>>>>>>> shawwn/tpu
 # Dataset class that loads data from tfrecords files.
 
 
@@ -100,28 +106,22 @@ class TFRecordDataset:
         self.min_h = min_h
         self.min_w = min_w
         # List tfrecords files and inspect their shapes.
-        assert os.path.isdir(self.tfrecord_dir)
-        tfr_files = sorted(glob.glob(os.path.join(self.tfrecord_dir, "*.tfrecords")))
+        assert gfile.IsDirectory(self.tfrecord_dir)
+        tfr_files = sorted(tf.io.gfile.glob(os.path.join(self.tfrecord_dir, '*.tfrecords')))
         assert len(tfr_files) >= 1
-        tfr_shapes = []
-        for tfr_file in tfr_files:
-            tfr_opt = tf.python_io.TFRecordOptions(
-                tf.python_io.TFRecordCompressionType.NONE
-            )
-            for record in tf.python_io.tf_record_iterator(tfr_file, tfr_opt):
-                tfr_shapes.append(parse_tfrecord_np(record).shape)
-                #tfr_shapes.append(parse_tfrecord_np_raw(record))
-                break
 
-        # Autodetect label filename.
-        if self.label_file is None:
-            guess = sorted(glob.glob(os.path.join(self.tfrecord_dir, "*.labels")))
-            if len(guess):
-                self.label_file = guess[0]
-        elif not os.path.isfile(self.label_file):
-            guess = os.path.join(self.tfrecord_dir, self.label_file)
-            if os.path.isfile(guess):
-                self.label_file = guess
+        # To avoid parsing the entire dataset looking for the max
+        # resolution, just assume that we can extract the LOD level
+        # from the tfrecords file name.
+        tfr_shapes = []
+        lod = -1
+        for tfr_file in tfr_files:
+
+          match = re.match('.*([0-9]+).tfrecords', tfr_file)
+          if match:
+            level = int(match.group(1))
+            res = 2**level
+            tfr_shapes.append((3, res, res))
 
         # Determine shape and resolution.
         max_shape = max(tfr_shapes, key=np.prod)
@@ -144,41 +144,32 @@ class TFRecordDataset:
         self.label_dtype = self._np_labels.dtype.name
 
         # Build TF expressions.
-        with tf.name_scope("Dataset"), tf.device("/cpu:0"):
-            self._tf_minibatch_in = tf.placeholder(
-                tf.int64, name="minibatch_in", shape=[]
-            )
-            self._tf_labels_var = tflib.create_var_with_large_initial_value(
-                self._np_labels, name="labels_var"
-            )
-            self._tf_labels_dataset = tf.data.Dataset.from_tensor_slices(
-                self._tf_labels_var
-            )
+        with tf.name_scope('Dataset'), tflex.device('/cpu:0'):
+            self._tf_minibatch_in = tf.placeholder(tf.int64, name='minibatch_in', shape=[])
+            self._tf_labels_var = tflib.create_var_with_large_initial_value(self._np_labels, name='labels_var')
+            self._tf_labels_dataset = tf.data.Dataset.from_tensor_slices(self._tf_labels_var)
+            for tfr_file, tfr_shape, tfr_lod in zip(tfr_files, tfr_shapes, tfr_lods):
+                if tfr_lod < 0:
+                    continue
+                dset = tf.data.TFRecordDataset(tfr_file, compression_type='', buffer_size=buffer_mb<<20)
+                if max_images is not None:
+                    dset = dset.take(max_images)
+                dset = dset.map(self.parse_tfrecord_tf, num_parallel_calls=num_threads)
+                dset = tf.data.Dataset.zip((dset, self._tf_labels_dataset))
+                bytes_per_item = np.prod(tfr_shape) * np.dtype(self.dtype).itemsize
+                if shuffle_mb > 0:
+                    dset = dset.shuffle(((shuffle_mb << 20) - 1) // bytes_per_item + 1)
+                if repeat:
+                    dset = dset.repeat()
+                if prefetch_mb > 0:
+                    dset = dset.prefetch(((prefetch_mb << 20) - 1) // bytes_per_item + 1)
+                dset = dset.batch(self._tf_minibatch_in)
+                self._tf_datasets[tfr_lod] = dset
+            self._tf_iterator = tf.data.Iterator.from_structure(self._tf_datasets[0].output_types, self._tf_datasets[0].output_shapes)
+            self._tf_init_ops = {lod: self._tf_iterator.make_initializer(dset) for lod, dset in self._tf_datasets.items()}
 
-            # only use the full resolution version file tfr_file
-            # This portion of the code has been edited to make sure that the Dataset
-            # only returns the highest resolution files
-            tfr_file = tfr_files[-1]  # should be the highest resolution tf_record file
-            tfr_shape = tfr_shapes[-1]  # again the highest resolution shape
-            dset = tf.data.TFRecordDataset(
-                tfr_file, compression_type="", buffer_size=buffer_mb << 20
-            )
-            dset = dset.map(parse_tfrecord_tf, num_parallel_calls=num_threads)
-            #dset = dset.map(parse_tfrecord_tf_raw, num_parallel_calls=num_threads)
-            dset = tf.data.Dataset.zip((dset, self._tf_labels_dataset))
-            bytes_per_item = np.prod(tfr_shape) * np.dtype(self.dtype).itemsize
-            if shuffle_mb > 0:
-                dset = dset.shuffle(((shuffle_mb << 20) - 1) // bytes_per_item + 1)
-            if repeat:
-                dset = dset.repeat()
-            if prefetch_mb > 0:
-                dset = dset.prefetch(((prefetch_mb << 20) - 1) // bytes_per_item + 1)
-            dset = dset.batch(self._tf_minibatch_in)
-            self._tf_dataset = dset
-            self._tf_iterator = tf.data.Iterator.from_structure(
-                self._tf_dataset.output_types, self._tf_dataset.output_shapes
-            )
-            self._tf_init_op = self._tf_iterator.make_initializer(self._tf_dataset)
+    def close(self):
+        pass
 
     # Use the given minibatch size and level-of-detail for the data returned by get_minibatch_tf().
     def configure(self, minibatch_size, lod_in=0):
@@ -200,16 +191,12 @@ class TFRecordDataset:
         return tflib.run(self._tf_minibatch_np)
 
     # Get random labels as TensorFlow expression.
-    def get_random_labels_tf(self, minibatch_size):  # => labels
-        if self.label_size > 0:
-            with tf.device("/cpu:0"):
-                return tf.gather(
-                    self._tf_labels_var,
-                    tf.random_uniform(
-                        [minibatch_size], 0, self._np_labels.shape[0], dtype=tf.int32
-                    ),
-                )
-        return tf.zeros([minibatch_size, 0], self.label_dtype)
+    def get_random_labels_tf(self, minibatch_size): # => labels
+        with tf.name_scope('Dataset'):
+            if self.label_size > 0:
+                with tflex.device('/cpu:0'):
+                    return tf.gather(self._tf_labels_var, tf.random_uniform([minibatch_size], 0, self._np_labels.shape[0], dtype=tf.int32))
+            return tf.zeros([minibatch_size, 0], self.label_dtype)
 
     # Get random labels as NumPy array.
     def get_random_labels_np(self, minibatch_size):  # => labels

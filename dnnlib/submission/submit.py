@@ -115,14 +115,14 @@ class SubmitConfig(util.EasyDict):
 
 def get_path_from_template(path_template: str, path_type: PathType = PathType.AUTO) -> str:
     """Replace tags in the given path template and return either Windows or Linux formatted path."""
+    if path_template.startswith('gs://'):
+      return path_template
     # automatically select path type depending on running OS
     if path_type == PathType.AUTO:
         if platform.system() == "Windows":
             path_type = PathType.WINDOWS
-        elif platform.system() == "Linux":
-            path_type = PathType.LINUX
         else:
-            raise RuntimeError("Unknown platform")
+            path_type = PathType.LINUX
 
     path_template = path_template.replace("<USERNAME>", get_user_name())
 
@@ -160,15 +160,12 @@ def get_user_name():
         return _user_name_override
     elif platform.system() == "Windows":
         return os.getlogin()
-    elif platform.system() == "Linux":
+    else:
         try:
-            import pwd
-            return pwd.getpwuid(os.geteuid()).pw_name
+            import pwd # pylint: disable=import-error
+            return pwd.getpwuid(os.geteuid()).pw_name # pylint: disable=no-member
         except:
             return "unknown"
-    else:
-        raise RuntimeError("Unknown platform")
-
 
 def make_run_dir_path(*paths):
     """Make a path/filename that resides under the current submit run_dir.

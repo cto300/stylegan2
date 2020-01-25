@@ -7,8 +7,11 @@
 """Main training script."""
 
 import pickle
+import os
 import numpy as np
 import tensorflow as tf
+import tflex
+import time
 import dnnlib
 import dnnlib.tflib as tflib
 from dnnlib.tflib.autosummary import autosummary
@@ -148,6 +151,13 @@ def training_loop(
     #restore_partial_fn      = 'wikiart-mmavg-006727.pkl',     # Filename of to be restored network
     resume_with_new_nets    = False):   # Construct new networks according to G_args and D_args before resuming training?
 
+    if resume_pkl is None and 'RESUME_PKL' in os.environ:
+        resume_pkl = os.environ['RESUME_PKL']
+    if resume_kimg <= 0.0 and 'RESUME_KIMG' in os.environ:
+        resume_kimg = float(os.environ['RESUME_KIMG'])
+    if resume_time <= 0.0 and 'RESUME_TIME' in os.environ:
+        resume_time = float(os.environ['RESUME_TIME'])
+
     # Initialize dnnlib and TensorFlow.
     tflib.init_tf(tf_config)
     num_gpus = dnnlib.submit_config.num_gpus
@@ -158,7 +168,7 @@ def training_loop(
     misc.save_image_grid(grid_reals, dnnlib.make_run_dir_path('reals.jpg'), drange=training_set.dynamic_range, grid_size=grid_size)
 
     # Construct or load networks.
-    with tf.device('/gpu:0'):
+    with tflex.device('/gpu:0'):
         if resume_pkl is None or resume_with_new_nets:
             print('Constructing networks...')
             G = tflib.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **G_args)
@@ -196,9 +206,37 @@ def training_loop(
     grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
     misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.jpg'), drange=drange_net, grid_size=grid_size)
 
+    def save_image_grid(latents, grid_size, filename):
+        grid_fakes = Gs.run(latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
+        misc.save_image_grid(grid_fakes, filename, drange=drange_net, grid_size=grid_size)
+
+    tflex.save_image_grid = save_image_grid
+
+    def save_image_grid_command(randomize=False):
+        if randomize:
+            tflex.latents = np.random.randn(np.prod(grid_size), *G.input_shape[1:])
+        if not hasattr(tflex, 'latents'):
+            tflex.latents = grid_latents
+        if randomize or not hasattr(tflex, 'grid_filename'):
+            tflex.grid_filename = dnnlib.make_run_dir_path('grid%06d.png' % int(time.time()))
+        use_grid_size = (2, 2)
+        latents = tflex.latents[:np.prod(use_grid_size)]
+        tflex.save_image_grid(latents, use_grid_size, tflex.grid_filename)
+        print('Saved ' + tflex.grid_filename)
+
+    tflex.save_image_grid_command = save_image_grid_command
+
+    @tflex.register_command
+    def image_grid():
+        tflex.save_image_grid_command(randomize=True)
+
+    @tflex.register_command
+    def resave_image_grid():
+        tflex.save_image_grid_command(randomize=False)
+
     # Setup training inputs.
     print('Building TensorFlow graph...')
-    with tf.name_scope('Inputs'), tf.device('/cpu:0'):
+    with tf.name_scope('Inputs'), tflex.device('/cpu:0'):
         lod_in               = tf.placeholder(tf.float32, name='lod_in', shape=[])
         lrate_in             = tf.placeholder(tf.float32, name='lrate_in', shape=[])
         minibatch_size_in    = tf.placeholder(tf.int32, name='minibatch_size_in', shape=[])
@@ -225,7 +263,7 @@ def training_loop(
     # Build training graph for each GPU.
     data_fetch_ops = []
     for gpu in range(num_gpus):
-        with tf.name_scope('GPU%d' % gpu), tf.device('/gpu:%d' % gpu):
+        with tf.name_scope('GPU%d' % gpu), tflex.device('/gpu:%d' % gpu):
 
             # Create GPU-specific shadow copies of G and D.
             G_gpu = G if gpu == 0 else G.clone(G.name + '_shadow')
@@ -274,11 +312,14 @@ def training_loop(
     Gs_update_op = Gs.setup_as_moving_average_of(G, beta=Gs_beta)
 
     # Finalize graph.
-    with tf.device('/gpu:0'):
-        try:
-            peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
-        except tf.errors.NotFoundError:
-            peak_gpu_mem_op = tf.constant(0)
+    if tflex.has_gpu():
+        with tflex.device('/gpu:0'):
+            try:
+                peak_gpu_mem_op = tf.contrib.memory_stats.MaxBytesInUse()
+            except tf.errors.NotFoundError:
+                peak_gpu_mem_op = tf.constant(0)
+    else:
+        peak_gpu_mem_op = None
     tflib.init_uninitialized_vars()
 
     print('Initializing logs...')
@@ -298,6 +339,7 @@ def training_loop(
     prev_lod = -1.0
     running_mb_counter = 0
     while cur_nimg < total_kimg * 1000:
+        if tflex.state.noisy: print('cur_nimg', cur_nimg, total_kimg)
         if dnnlib.RunContext.get().should_stop(): break
 
         # Choose training parameters and configure training ops.
@@ -312,6 +354,7 @@ def training_loop(
         # Run training ops.
         feed_dict = {lod_in: sched.lod, lrate_in: sched.G_lrate, minibatch_size_in: sched.minibatch_size, minibatch_gpu_in: sched.minibatch_gpu}
         for _repeat in range(minibatch_repeats):
+            if tflex.state.noisy: print('_repeat', _repeat)
             rounds = range(0, sched.minibatch_size, sched.minibatch_gpu * num_gpus)
             run_G_reg = (lazy_regularization and running_mb_counter % G_reg_interval == 0)
             run_D_reg = (lazy_regularization and running_mb_counter % D_reg_interval == 0)
@@ -320,9 +363,11 @@ def training_loop(
 
             # Fast path without gradient accumulation.
             if len(rounds) == 1:
+                if tflex.state.noisy: print('G_train_op', 'fast path')
                 tflib.run([G_train_op, data_fetch_op], feed_dict)
                 if run_G_reg:
                     tflib.run(G_reg_op, feed_dict)
+                if tflex.state.noisy: print('D_train_op', 'fast path')
                 tflib.run([D_train_op, Gs_update_op], feed_dict)
                 if run_D_reg:
                     tflib.run(D_reg_op, feed_dict)
@@ -330,16 +375,22 @@ def training_loop(
             # Slow path with gradient accumulation.
             else:
                 for _round in rounds:
+                    if tflex.state.noisy: print('G_train_op', 'slow path')
                     tflib.run(G_train_op, feed_dict)
                 if run_G_reg:
                     for _round in rounds:
+                        if tflex.state.noisy: print('G_reg_op', 'slow path')
                         tflib.run(G_reg_op, feed_dict)
+                if tflex.state.noisy: print('G_update_op', 'slow path')
                 tflib.run(Gs_update_op, feed_dict)
                 for _round in rounds:
+                    if tflex.state.noisy: print('data_fetch_op', 'slow path')
                     tflib.run(data_fetch_op, feed_dict)
+                    if tflex.state.noisy: print('D_train_op', 'slow path')
                     tflib.run(D_train_op, feed_dict)
                 if run_D_reg:
                     for _round in rounds:
+                        if tflex.state.noisy: print('D_reg_op', 'slow path')
                         tflib.run(D_reg_op, feed_dict)
 
         # Perform maintenance tasks once per tick.
@@ -351,28 +402,48 @@ def training_loop(
             tick_time = dnnlib.RunContext.get().get_time_since_last_update()
             total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
 
+            def report_progress_command():
+                print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
+                    autosummary('Progress/tick', cur_tick),
+                    autosummary('Progress/kimg', cur_nimg / 1000.0),
+                    autosummary('Progress/lod', sched.lod),
+                    autosummary('Progress/minibatch', sched.minibatch_size),
+                    dnnlib.util.format_time(autosummary('Timing/total_sec', total_time)),
+                    autosummary('Timing/sec_per_tick', tick_time),
+                    autosummary('Timing/sec_per_kimg', tick_time / tick_kimg),
+                    autosummary('Timing/maintenance_sec', maintenance_time),
+                    autosummary('Resources/peak_gpu_mem_gb', (peak_gpu_mem_op.eval() if peak_gpu_mem_op is not None else 0) / 2**30)))
+                autosummary('Timing/total_hours', total_time / (60.0 * 60.0))
+                autosummary('Timing/total_days', total_time / (24.0 * 60.0 * 60.0))
+
+            if not hasattr(tflex, 'report_progress_command'):
+                tflex.report_progress_command = report_progress_command
+
+            @tflex.register_command
+            def report_progress():
+                tflex.report_progress_command()
+
+            def save_command():
+                pkl = dnnlib.make_run_dir_path('network-snapshot-%06d.pkl' % (cur_nimg // 1000))
+                misc.save_pkl((G, D, Gs), pkl)
+                metrics.run(pkl, run_dir=dnnlib.make_run_dir_path(), data_dir=dnnlib.convert_path(data_dir), num_gpus=num_gpus, tf_config=tf_config)
+
+            if not hasattr(tflex, 'save_command'):
+                tflex.save_command = save_command
+
+            @tflex.register_command
+            def save():
+                tflex.save_command()
+
             # Report progress.
-            print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
-                autosummary('Progress/tick', cur_tick),
-                autosummary('Progress/kimg', cur_nimg / 1000.0),
-                autosummary('Progress/lod', sched.lod),
-                autosummary('Progress/minibatch', sched.minibatch_size),
-                dnnlib.util.format_time(autosummary('Timing/total_sec', total_time)),
-                autosummary('Timing/sec_per_tick', tick_time),
-                autosummary('Timing/sec_per_kimg', tick_time / tick_kimg),
-                autosummary('Timing/maintenance_sec', maintenance_time),
-                autosummary('Resources/peak_gpu_mem_gb', peak_gpu_mem_op.eval() / 2**30)))
-            autosummary('Timing/total_hours', total_time / (60.0 * 60.0))
-            autosummary('Timing/total_days', total_time / (24.0 * 60.0 * 60.0))
+            tflex.report_progress_command()
 
             # Save snapshots.
             if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
                 grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
                 misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.jpg' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
             if network_snapshot_ticks is not None and (cur_tick % network_snapshot_ticks == 0 or done):
-                pkl = dnnlib.make_run_dir_path('network-snapshot-%06d.pkl' % (cur_nimg // 1000))
-                misc.save_pkl((G, D, Gs), pkl)
-                metrics.run(pkl, run_dir=dnnlib.make_run_dir_path(), data_dir=dnnlib.convert_path(data_dir), num_gpus=num_gpus, tf_config=tf_config)
+                tflex.save_command()
 
             # Update summaries and RunContext.
             metrics.update_autosummaries()

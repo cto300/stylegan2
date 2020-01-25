@@ -14,6 +14,8 @@ from dnnlib import EasyDict
 
 from metrics.metric_defaults import metric_defaults
 
+from tensorflow.python.platform import gfile
+
 #----------------------------------------------------------------------------
 
 _valid_configs = [
@@ -185,7 +187,7 @@ def main():
 
     args = parser.parse_args()
 
-    if not os.path.exists(args.data_dir):
+    if not gfile.IsDirectory(args.data_dir):
         print ('Error: dataset root directory does not exist.')
         sys.exit(1)
 

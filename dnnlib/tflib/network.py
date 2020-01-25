@@ -13,6 +13,7 @@ import uuid
 import sys
 import numpy as np
 import tensorflow as tf
+import tflex
 
 from collections import OrderedDict
 from typing import Any, List, Tuple, Union
@@ -428,13 +429,13 @@ class Network:
         # Build graph.
         if key not in self._run_cache:
             with tfutil.absolute_name_scope(self.scope + "/_Run"), tf.control_dependencies(None):
-                with tf.device("/cpu:0"):
+                with tflex.device("/cpu:0"):
                     in_expr = [tf.placeholder(tf.float32, name=name) for name in self.input_names]
                     in_split = list(zip(*[tf.split(x, num_gpus) for x in in_expr]))
 
                 out_split = []
                 for gpu in range(num_gpus):
-                    with tf.device("/gpu:%d" % gpu):
+                    with tflex.device("/gpu:%d" % gpu):
                         net_gpu = self.clone() if assume_frozen else self
                         in_gpu = in_split[gpu]
 
@@ -454,7 +455,7 @@ class Network:
                         assert len(out_gpu) == self.num_outputs
                         out_split.append(out_gpu)
 
-                with tf.device("/cpu:0"):
+                with tflex.device("/cpu:0"):
                     out_expr = [tf.concat(outputs, axis=0) for outputs in zip(*out_split)]
                     self._run_cache[key] = in_expr, out_expr
 
@@ -567,7 +568,7 @@ class Network:
         if title is None:
             title = self.name
 
-        with tf.name_scope(None), tf.device(None), tf.control_dependencies(None):
+        with tf.name_scope(None), tflex.device(None), tf.control_dependencies(None):
             for local_name, var in self.trainables.items():
                 if "/" in local_name:
                     p = local_name.split("/")
