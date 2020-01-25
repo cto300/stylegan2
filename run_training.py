@@ -33,7 +33,7 @@ _valid_configs = [
 
 #----------------------------------------------------------------------------
 
-def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, mirror_augment, mirror_augment_v, metrics, min_h, min_w, res_log2, lr):
+def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, mirror_augment, mirror_augment_v, metrics, min_h, min_w, res_log2, lr, cond):
     train     = EasyDict(run_func_name='training.training_loop.training_loop') # Options for training loop.
     G         = EasyDict(func_name='training.networks_stylegan2.G_main')       # Options for generator network.
     D         = EasyDict(func_name='training.networks_stylegan2.D_stylegan2')  # Options for discriminator network.
@@ -51,10 +51,11 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     train.mirror_augment = mirror_augment
     train.mirror_augment_v = mirror_augment_v
     train.image_snapshot_ticks = 1
-    train.network_snapshot_ticks = 4
-    sched.G_lrate_base = sched.D_lrate_base = lr
-    sched.minibatch_size_base = 32
-    sched.minibatch_gpu_base = 4
+    train.network_snapshot_ticks = 1
+    sched.D_lrate_base = lr
+    sched.G_lrate_base = 0.5 * sched.D_lrate_base # two time update rule enforced
+    sched.minibatch_size_base = 192
+    sched.minibatch_gpu_base = 3
     D_loss.gamma = 10
     metrics = [metric_defaults[x] for x in metrics]
     desc = 'stylegan2'
@@ -67,6 +68,9 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     assert num_gpus in [1, 2, 4, 8]
     sc.num_gpus = num_gpus
     desc += '-%dgpu' % num_gpus
+
+    if cond:
+        desc += '-cond'; dataset_args.max_label_size = 'full' # conditioned on full label
 
     assert config_id in _valid_configs
     desc += '-' + config_id
@@ -175,9 +179,10 @@ def main():
     parser.add_argument('--metrics', help='Comma-separated list of metrics or "none" (default: %(default)s)', default='fid50k', type=_parse_comma_sep)
     parser.add_argument('--min-h', help='lowest dim of height', default=4, type=int)
     parser.add_argument('--min-w', help='lowest dim of width', default=4, type=int)
-    parser.add_argument('--res-log2', help='multiplier for image size, the training image size (height, width) should be (min_h * 2**res_log2, min_w * 2**res_log2)', default=7, type=int)
+    parser.add_argument('--res-log2', help='multiplier for image size, the training image size (height, width) should be (min_h * 2**res_log2, min_w * 2**res_log2)', default=4, type=int)
     parser.add_argument('--lr', help='base learning rate', default=0.003, type=float)
-    
+    parser.add_argument('--cond', help='conditional model', default=False, metavar='BOOL', type=_str_to_bool)
+
     args = parser.parse_args()
 
     if not os.path.exists(args.data_dir):

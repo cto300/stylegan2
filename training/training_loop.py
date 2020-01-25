@@ -6,6 +6,7 @@
 
 """Main training script."""
 
+import pickle
 import numpy as np
 import tensorflow as tf
 import dnnlib
@@ -63,7 +64,9 @@ def training_schedule(
     D_lrate_dict            = {},       # Resolution-specific overrides.
     lrate_rampup_kimg       = 0,        # Duration of learning rate ramp-up.
     tick_kimg_base          = 4,        # Default interval of progress snapshots.
-    tick_kimg_dict          = {8:28, 16:24, 32:20, 64:16, 128:12, 256:8, 512:6, 1024:4}): # Resolution-specific overrides.
+    tick_kimg_dict          = {8:28, 16:24, 32:20, 64:16, 128:12, 256:8, 512:6, 1024:4}, # Resolution-specific overrides.
+    restore_partial_fn      = None      # Filename of to be restored network
+    ):
 
     # Initialize result dict.
     s = dnnlib.EasyDict()
@@ -137,8 +140,12 @@ def training_loop(
     save_tf_graph           = False,    # Include full TensorFlow computation graph in the tfevents file?
     save_weight_histograms  = False,    # Include weight histograms in the tfevents file?
     resume_pkl              = 'latest',     # Network pickle to resume training from, None = train from scratch.
+    #resume_pkl              = 'restore_partial',     # Network pickle to resume training from, None = train from scratch.
     resume_kimg             = 0.0,      # Assumed training progress at the beginning. Affects reporting and training schedule.
+    #resume_kimg             = 6727.0,      # Assumed training progress at the beginning. Affects reporting and training schedule.
     resume_time             = 0.0,      # Assumed wallclock time at the beginning. Affects reporting.
+    restore_partial_fn      = None,     # Filename of to be restored network
+    #restore_partial_fn      = 'wikiart-mmavg-006727.pkl',     # Filename of to be restored network
     resume_with_new_nets    = False):   # Construct new networks according to G_args and D_args before resuming training?
 
     # Initialize dnnlib and TensorFlow.
@@ -152,18 +159,35 @@ def training_loop(
 
     # Construct or load networks.
     with tf.device('/gpu:0'):
-        if resume_pkl == 'latest':
-           resume_pkl, resume_kimg = misc.locate_latest_pkl(dnnlib.submit_config.run_dir_root) 
         if resume_pkl is None or resume_with_new_nets:
             print('Constructing networks...')
             G = tflib.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **G_args)
             D = tflib.Network('D', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **D_args)
             Gs = G.clone('Gs')
-        else:
-            print('Loading networks from "%s"...' % resume_pkl)
-            rG, rD, rGs = misc.load_pkl(resume_pkl)
-            if resume_with_new_nets: G.copy_vars_from(rG); D.copy_vars_from(rD); Gs.copy_vars_from(rGs)
-            else: G = rG; D = rD; Gs = rGs
+        if resume_pkl is not None:
+            if resume_pkl == 'restore_partial':
+                print('Restore partially...')
+                # Initialize networks
+                G = tflib.Network('G', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **G_args)
+                D = tflib.Network('D', num_channels=training_set.shape[0], resolution=training_set.shape[1], label_size=training_set.label_size, **D_args)
+                Gs = G.clone('Gs')
+
+                # Load pre-trained networks
+                assert restore_partial_fn != None
+                G_partial, D_partial, Gs_partial = pickle.load(open(restore_partial_fn, 'rb'))
+
+                # Restore (subset of) pre-trained weights
+                # (only parameters that match both name and shape)
+                G.copy_compatible_trainables_from(G_partial)
+                D.copy_compatible_trainables_from(D_partial)
+                Gs.copy_compatible_trainables_from(Gs_partial)
+            else:
+                if resume_pkl == 'latest':
+                    resume_pkl, resume_kimg = misc.locate_latest_pkl(dnnlib.submit_config.run_dir_root)
+                print('Loading networks from "%s"...' % resume_pkl)
+                rG, rD, rGs = misc.load_pkl(resume_pkl)
+                if resume_with_new_nets: G.copy_vars_from(rG); D.copy_vars_from(rD); Gs.copy_vars_from(rGs)
+                else: G = rG; D = rD; Gs = rGs
 
     # Print layers and generate initial image snapshot.
     G.print_layers(); D.print_layers()

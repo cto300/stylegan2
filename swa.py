@@ -15,7 +15,7 @@ def fetch_models_from_files(model_list):
         with open(fn, 'rb') as f:
             yield pickle.load(f)
 
-def apply_swa_to_checkpoints(models):
+def apply_swa_to_checkpoints(models, max_epoch = None):
     gen, dis, gs = next(models)
     print('Loading', end='', flush=True)
     mod_gen = gen
@@ -24,7 +24,8 @@ def apply_swa_to_checkpoints(models):
     epoch = 0
     try:
         while True:
-            epoch += 1
+            if (max_epoch is None) or (epoch < max_epoch):
+                epoch += 1
             gen, dis, gs = next(models)
             if gs is None:
                 print("")
@@ -43,18 +44,19 @@ parser.add_argument('results_dir', help='Directory with network checkpoints for 
 parser.add_argument('--filespec', default='network*.pkl', help='The files to average')
 parser.add_argument('--output_model', default='network_avg.pkl', help='The averaged model to output')
 parser.add_argument('--count', default=6, help='Average the last n checkpoints', type=int)
+parser.add_argument('--max_epoch', default=3, help='Maximum weighted average threshold', type=int)
 
 args, other_args = parser.parse_known_args()
 swa_epochs = args.count
 filepath = args.output_model
 files = glob.glob(os.path.join(args.results_dir,args.filespec))
+files.sort()
 if (len(files)>swa_epochs):
     files = files[-swa_epochs:]
-files.sort()
 print(files)
 init_tf()
 models = fetch_models_from_files(files)
-swa_models = apply_swa_to_checkpoints(models)
+swa_models = apply_swa_to_checkpoints(models, args.max_epoch)
 
 print('Final model parameters set to stochastic weight average.')
 with open(filepath, 'wb') as f:
