@@ -18,6 +18,10 @@ import shutil
 import sys
 import time
 import traceback
+import threading
+import dnnlib.tflib as tflib
+import tflex
+import tensorflow as tf
 
 from enum import Enum
 
@@ -270,11 +274,39 @@ def run_wrapper(submit_config: SubmitConfig) -> None:
 
         run_func_obj = util.get_obj_by_name(submit_config.run_func_name)
         assert callable(run_func_obj)
-        sig = inspect.signature(run_func_obj)
-        if 'submit_config' in sig.parameters:
-            run_func_obj(submit_config=submit_config, **submit_config.run_func_kwargs)
+        def thunk():
+            sig = inspect.signature(run_func_obj)
+            if 'submit_config' in sig.parameters:
+                run_func_obj(submit_config=submit_config, **submit_config.run_func_kwargs)
+            else:
+                run_func_obj(**submit_config.run_func_kwargs)
+
+        if 'TPU_NAME' not in os.environ:
+            thunk()
         else:
-            run_func_obj(**submit_config.run_func_kwargs)
+            kws = submit_config.run_func_kwargs
+            tf_config = kws['tf_config'] if 'tf_config' in kws else {}
+            threads = []
+            tflex.trainers = []
+            tpu_core_count = 8
+            for i in range(tpu_core_count):
+                def worker(i):
+                    spec = '#%d' % i
+                    print(spec, 'Initializing...')
+                    tflib.init_tf(tf_config)
+                    sess = tf.get_default_session()
+                    sess.id = i
+                    tflex.trainers.append(sess)
+                    cores = [x.name for x in sess.list_devices()[2:10]]
+                    tflex.set_override_device(cores[i])
+                    with tf.device(cores[i]):
+                        print(spec, 'Running thunk...')
+                        thunk()
+                thread = threading.Thread(target=worker, args=(i,))
+                threads.append(thread)
+                thread.start()
+            for thread in threads:
+                thread.join()
 
         print("dnnlib: Finished {0}() in {1}.".format(submit_config.run_func_name, util.format_time(time.time() - start_time)))
     except:

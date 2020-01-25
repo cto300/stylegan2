@@ -61,6 +61,7 @@ def parse_tfrecord_np_raw(record):
 # ----------------------------------------------------------------------------
 =======
 from tensorflow.python.platform import gfile
+from tensorflow.python.framework import errors_impl
 
 #----------------------------------------------------------------------------
 >>>>>>> shawwn/tpu
@@ -184,11 +185,18 @@ class TFRecordDataset:
         return self._tf_iterator.get_next()
 
     # Get next minibatch as NumPy arrays.
-    def get_minibatch_np(self, minibatch_size):  # => images, labels
-        self.configure(minibatch_size)
-        if self._tf_minibatch_np is None:
-            self._tf_minibatch_np = self.get_minibatch_tf()
-        return tflib.run(self._tf_minibatch_np)
+
+    def get_minibatch_np(self, minibatch_size, lod=0): # => images, labels
+        while True:
+            self.configure(minibatch_size, lod)
+            with tf.name_scope('Dataset'):
+                if self._tf_minibatch_np is None:
+                    self._tf_minibatch_np = self.get_minibatch_tf()
+                try:
+                    return tflib.run(self._tf_minibatch_np)
+                except errors_impl.AbortedError:
+                    import traceback
+                    traceback.print_exc()
 
     # Get random labels as TensorFlow expression.
     def get_random_labels_tf(self, minibatch_size): # => labels

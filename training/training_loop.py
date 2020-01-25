@@ -159,7 +159,7 @@ def training_loop(
         resume_time = float(os.environ['RESUME_TIME'])
 
     # Initialize dnnlib and TensorFlow.
-    tflib.init_tf(tf_config)
+    #tflib.init_tf(tf_config)
     num_gpus = dnnlib.submit_config.num_gpus
 
     # Load training set.
