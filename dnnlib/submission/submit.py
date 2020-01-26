@@ -281,11 +281,12 @@ def run_wrapper(submit_config: SubmitConfig) -> None:
             else:
                 run_func_obj(**submit_config.run_func_kwargs)
 
-        if 'TPU_NAME' not in os.environ:
+        kws = submit_config.run_func_kwargs
+        tf_config = kws['tf_config'] if 'tf_config' in kws else {}
+        if 'TPU_NAME' not in os.environ or 'NO_SWARM' in os.environ:
+            tflib.init_tf(tf_config)
             thunk()
         else:
-            kws = submit_config.run_func_kwargs
-            tf_config = kws['tf_config'] if 'tf_config' in kws else {}
             threads = []
             tflex.trainers = []
             tpu_core_count = 8
