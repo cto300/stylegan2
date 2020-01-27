@@ -26,8 +26,9 @@ except:
     # Older TensorFlow versions
     import tensorflow.contrib.nccl as nccl_ops
 
+from tensorflow.python.framework import ops as tf_ops
 
-def all_sum_plain(g, colocate=True, *args, **kws):
+def all_sum_plain(g, colocate=False, *args, **kws):
   r = []
   for i in range(len(g)):
     if colocate:
