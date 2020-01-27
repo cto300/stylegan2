@@ -370,7 +370,6 @@ def training_loop(
             def report_progress_command():
                 total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
                 tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
-                tick_start_nimg = cur_nimg
                 tick_time = dnnlib.RunContext.get().get_time_since_last_update()
                 print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
                     autosummary('Progress/tick', cur_tick),
