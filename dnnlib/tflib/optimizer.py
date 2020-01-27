@@ -63,9 +63,9 @@ def all_sum_tpu(g, colocate=True, *args, **kws):
   return all_sum_plain(g, colocate=colocate, *args, **kws)
 
 def all_sum(cores, g, colocate=True, *args, **kws):
-  if any([':TPU:' in x.name for x in cores]):
+  if any([':TPU:' in x for x in cores.keys()]):
     return all_sum_tpu(g, colocate=colocate, *args, **kws)
-  elif any([':GPU:' in x.name for x in cores]):
+  elif any([':GPU:' in x for x in cores.keys()]):
     return all_sum_gpu(g, *args, **kws)
   else:
     return all_sum_cpu(g, *args, **kws)
