@@ -364,7 +364,6 @@ def training_loop(
         if cur_tick < 0 or cur_nimg >= tick_start_nimg + sched.tick_kimg * 1000 or done:
             cur_tick += 1
             tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
-            tick_start_nimg = cur_nimg
             tick_time = dnnlib.RunContext.get().get_time_since_last_update()
 
             def report_progress_command():
@@ -405,6 +404,7 @@ def training_loop(
 
             # Report progress.
             tflex.report_progress_command()
+            tick_start_nimg = cur_nimg
 
             # Save snapshots.
             if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
