@@ -720,6 +720,8 @@ def device(name=''):
   if has_override_device():
     return nullcontext()
   if has_override_cores():
+    if name is None:
+      return tf.device(name)
     if name.startswith('/gpu:'):
       i = int(name.split(':', 1)[-1])
       return tf.device(get_cores()[i].name)
