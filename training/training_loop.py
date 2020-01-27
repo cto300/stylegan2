@@ -366,9 +366,12 @@ def training_loop(
             tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
             tick_start_nimg = cur_nimg
             tick_time = dnnlib.RunContext.get().get_time_since_last_update()
-            total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
 
             def report_progress_command():
+                total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
+                tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
+                tick_start_nimg = cur_nimg
+                tick_time = dnnlib.RunContext.get().get_time_since_last_update()
                 print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
                     autosummary('Progress/tick', cur_tick),
                     autosummary('Progress/kimg', cur_nimg / 1000.0),
@@ -408,7 +411,7 @@ def training_loop(
             if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
                 grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
                 misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.png' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
-            if network_snapshot_ticks is not None and (cur_tick % network_snapshot_ticks == 0 or done):
+            if network_snapshot_ticks is not None and cur_tick > 0 and (cur_tick % network_snapshot_ticks == 0 or done):
                 tflex.save_command()
 
             # Update summaries and RunContext.

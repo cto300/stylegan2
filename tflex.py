@@ -47,6 +47,56 @@ if not hasattr(state, 'noisy'):
 if not hasattr(state, 'debug'):
   state.debug = 'DEBUG' in os.environ
 
+def get_session(session=None):
+  if session is None:
+    session = tf.get_default_session()
+  return session
+
+def get_devices(session=None):
+  session = get_session(session)
+  if hasattr(session, '_cached_devices'):
+    devices = session._cached_devices
+  else:
+    devices = session._cached_devices = session.list_devices()
+  return devices
+
+def has_gpu(session=None):
+  session = get_session(session)
+  if hasattr(session, '_has_gpu'):
+    result = session._has_gpu
+  else:
+    devices = get_devices(session=session)
+    result = session._has_gpu = len([x for x in devices if ':GPU:' in x.name]) > 0
+  return result
+
+def has_tpu(session=None):
+  session = get_session(session)
+  if hasattr(session, '_has_tpu'):
+    result = session._has_tpu
+  else:
+    devices = get_devices(session=session)
+    result = session._has_tpu = len([x for x in devices if ':TPU:' in x.name]) > 0
+  return result
+
+def get_cores_from_devices(devices):
+  cores = [x for x in devices if ':TPU:' in x.name]
+  if len(cores) <= 0:
+    cores = [x for x in devices if ':GPU:' in x.name]
+  if len(cores) <= 0:
+    cores = [x for x in devices if ':CPU:' in x.name]
+  return cores
+
+def get_cores(session=None, devices=None):
+  if devices is None:
+    devices = get_devices(session=session)
+  return get_cores_from_devices(devices)
+
+def get_cpus(session=None, devices=None):
+  if devices is None:
+    devices = get_devices(session=session)
+  cpus = [x for x in devices if ':CPU:' in x.name]
+  return cpus
+
 def get_tpu_addr(tpu_name=None):
     # Get the TPU's location
     if tpu_name is not None:
@@ -638,23 +688,44 @@ from contextlib import contextmanager
 def nullcontext(enter_result=None):
     yield enter_result
 
-_devices = None
-_has_gpu = False
-_override_device = False
+def set_override_device(value, session=None):
+  session = get_session(session)
+  session._override_device = value
+  return value
 
-def set_override_device(value):
-  _override_device = value
+def has_override_device(session=None):
+  session = get_session(session)
+  return hasattr(session, '_override_device')
 
-def has_gpu():
-  global _devices
-  global _has_gpu
-  if _devices is None:
-    _devices = tf.get_default_session().list_devices()
-    _has_gpu = len([x.name for x in _devices if ':GPU' in x.name]) > 0
-  return _has_gpu
+def get_override_device(session=None):
+  session = get_session(session)
+  if hasattr(session, '_override_device'):
+    return session._override_device
+
+def set_override_cores(value, session=None):
+  session = get_session(session)
+  session._override_cores = value
+  return value
+
+def has_override_cores(session=None):
+  session = get_session(session)
+  return hasattr(session, '_override_cores')
+
+def get_override_cores(session=None):
+  session = get_session(session)
+  if hasattr(session, '_override_cores'):
+    return session._override_cores
 
 def device(name=''):
-  if _override_device:
+  if has_override_device():
+    return nullcontext()
+  if has_override_cores():
+    if name.startswith('/gpu:'):
+      i = int(name.split(':', 1)[-1])
+      return tf.device(get_cores()[i].name)
+    if name.startswith('/cpu:'):
+      i = int(name.split(':', 1)[-1])
+      return tf.device(get_cpus()[i].name)
     return nullcontext()
   if name is None:
     return tf.device(None)
@@ -664,4 +735,3 @@ def device(name=''):
   if 'cpu' in name:
     return tf.device(name)
   return nullcontext()
-

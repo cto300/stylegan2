@@ -23,6 +23,7 @@ import html
 import hashlib
 import glob
 import uuid
+import errno
 
 from distutils.util import strtobool
 from typing import Any, List, Tuple, Union
@@ -75,33 +76,51 @@ class Logger(object):
         if len(text) == 0: # workaround for a bug in VSCode debugger: sys.stdout.write(''); sys.stdout.flush() => crash
             return
 
-        if self.file is not None:
-            self.file.write(text)
+        try:
+          if self.file is not None:
+              self.file.write(text)
 
-        self.stdout.write(text)
+          self.stdout.write(text)
 
-        if self.should_flush:
-            self.flush()
+          if self.should_flush:
+              self.flush()
+        except Exception as e:
+          if e.errno == errno.ENOSPC:
+            pass # fail silently when disk full
+          else:
+            raise
 
     def flush(self) -> None:
         """Flush written text to both stdout and a file, if open."""
-        if self.file is not None:
-            self.file.flush()
+        try:
+          if self.file is not None:
+              self.file.flush()
 
-        self.stdout.flush()
+          self.stdout.flush()
+        except Exception as e:
+          if e.errno == errno.ENOSPC:
+            pass # fail silently when disk full
+          else:
+            raise
 
     def close(self) -> None:
         """Flush, close possible files, and remove stdout/stderr mirroring."""
         self.flush()
 
-        # if using multiple loggers, prevent closing in wrong order
-        if sys.stdout is self:
-            sys.stdout = self.stdout
-        if sys.stderr is self:
-            sys.stderr = self.stderr
+        try:
+          # if using multiple loggers, prevent closing in wrong order
+          if sys.stdout is self:
+              sys.stdout = self.stdout
+          if sys.stderr is self:
+              sys.stderr = self.stderr
 
-        if self.file is not None:
-            self.file.close()
+          if self.file is not None:
+              self.file.close()
+        except Exception as e:
+          if e.errno == errno.ENOSPC:
+            pass # fail silently when disk full
+          else:
+            raise
 
 
 # Small util functions
