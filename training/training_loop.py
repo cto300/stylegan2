@@ -403,6 +403,7 @@ def training_loop(
             def save():
                 tflex.save_command()
 
+            try:
               # Report progress.
               tflex.report_progress_command()
               tick_start_nimg = cur_nimg
