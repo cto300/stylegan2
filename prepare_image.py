@@ -387,7 +387,7 @@ def main():
     image_data, width, height, image = _process_image(args.infile)
     image_out = sess.run(tf.io.encode_jpeg(sess.run(random_crop(image_data, resize=args.resize))))
     if not args.outfile:
-      args.outfile = os.path.dirname(args.infile)
+      args.outfile = os.path.basename(args.infile)
       if args.outfile == args.infile:
         print('Implicitly overwriting infile not supported; pass `%s %s` to confirm' % (args.outfile, args.outfile))
         sys.exit(1)
