@@ -380,12 +380,17 @@ def main():
 
   parser = argparse.ArgumentParser()
   parser.add_argument('infile')
-  parser.add_argument('outfile')
+  parser.add_argument('outfile', nargs='?')
   parser.add_argument('-r', '--resize', type=int, default=0)
   args = me.args = parser.parse_args()
   with tf.Session(get_target()) as sess:
     image_data, width, height, image = _process_image(args.infile)
     image_out = sess.run(tf.io.encode_jpeg(sess.run(random_crop(image_data, resize=args.resize))))
+    if not args.outfile:
+      args.outfile = os.path.dirname(args.infile)
+      if args.outfile == args.infile:
+        print('Implicitly overwriting infile not supported; pass `%s %s` to confirm' % (args.outfile, args.outfile))
+        sys.exit(1)
     with open(args.outfile, 'wb') as f:
       f.write(image_out)
 
