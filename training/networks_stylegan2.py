@@ -495,8 +495,6 @@ def G_synthesis_stylegan2(
             x = layer(x, layer_idx=0, fmaps=nf(1), kernel=3)
         if architecture == 'skip':
             y = torgb(x, y, 2)
-        if 2**res == 64:
-            x = non_local_block(x, "SelfAtten", use_sn=False)
 
     # Main layers.
     for res in range(3, resolution_log2 + 1):
@@ -506,6 +504,8 @@ def G_synthesis_stylegan2(
                 y = upsample(y)
             if architecture == 'skip' or res == resolution_log2:
                 y = torgb(x, y, res)
+            if 2**res == 64:
+                x = non_local_block(x, "SelfAtten", use_sn=False)
     images_out = y
 
     assert images_out.dtype == tf.as_dtype(dtype)
@@ -670,13 +670,13 @@ def D_stylegan2(
     y = images_in
     for res in range(resolution_log2, 2, -1):
         with tf.variable_scope('%dx%d' % (2**res, 2**res)):
+            if 2**res == 64:
+                x = non_local_block(x, "SelfAtten", use_sn=False)
             if architecture == 'skip' or res == resolution_log2:
                 x = fromrgb(x, y, res)
             x = block(x, res)
             if architecture == 'skip':
                 y = downsample(y)
-            if 2**res == 64:
-                x = non_local_block(x, "SelfAtten", use_sn=False)
 
     # Final layers.
     with tf.variable_scope('4x4'):
