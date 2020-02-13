@@ -157,9 +157,8 @@ def G_logistic_ns_pathreg(G, D, opt, training_set, minibatch_size, pl_minibatch_
     with tf.name_scope('PathReg'):
 
         # Evaluate the regularization term using a smaller minibatch to conserve memory.
-        if pl_minibatch_shrink > 1 and minibatch_size > 1:
-            assert minibatch_size % pl_minibatch_shrink == 0
-            pl_minibatch = minibatch_size // pl_minibatch_shrink
+        if pl_minibatch_shrink > 1:
+            pl_minibatch = tf.maximum(1, minibatch_size // pl_minibatch_shrink)
             pl_latents = tf.random_normal([pl_minibatch] + G.input_shapes[0][1:])
             pl_labels = training_set.get_random_labels_tf(pl_minibatch)
             fake_images_out, fake_dlatents_out = G.get_output_for(pl_latents, pl_labels, is_training=True, return_dlatents=True)
