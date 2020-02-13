@@ -170,8 +170,8 @@ def training_loop(
     G.print_layers(); D.print_layers()
     sched = training_schedule(cur_nimg=total_kimg*1000, training_set=training_set, **sched_args)
     grid_latents = np.random.randn(np.prod(grid_size), *G.input_shape[1:])
-    grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
-    misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.png'), drange=drange_net, grid_size=grid_size)
+    #grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
+    #misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.png'), drange=drange_net, grid_size=grid_size)
 
     def save_image_grid(latents, grid_size, filename):
         grid_fakes = Gs.run(latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
