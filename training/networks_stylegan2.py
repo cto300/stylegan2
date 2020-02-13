@@ -505,6 +505,7 @@ def G_synthesis_stylegan2(
             if architecture == 'skip' or res == resolution_log2:
                 y = torgb(x, y, res)
             if 2**res == 64:
+                print('Adding self-attention block to generator')
                 x = non_local_block(x, "SelfAtten", use_sn=False)
     images_out = y
 
@@ -671,6 +672,7 @@ def D_stylegan2(
     for res in range(resolution_log2, 2, -1):
         with tf.variable_scope('%dx%d' % (2**res, 2**res)):
             if 2**res == 64:
+                print('Adding self-attention block to discriminator')
                 x = non_local_block(x, "SelfAtten", use_sn=False)
             if architecture == 'skip' or res == resolution_log2:
                 x = fromrgb(x, y, res)
