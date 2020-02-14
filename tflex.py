@@ -154,23 +154,14 @@ def get_cpus(session=None, devices=None):
   cpus = [x for x in devices if ':CPU:' in x.name]
   return cpus
 
-def get_tpu_resolver(tpu_name=None):
+def get_tpu_resolver(tpu_name='auto'):
   # Get the TPU's location
-  if tpu_name is not None:
+  if tpu_name != 'auto':
     return TPUClusterResolver(tpu_name)
-  if 'COLAB_TPU_ADDR' in os.environ:
+  elif 'COLAB_TPU_ADDR' in os.environ:
     return TPUClusterResolver()
   elif 'TPU_NAME' in os.environ:
     return TPUClusterResolver(os.environ['TPU_NAME'])
-
-def get_session_target(target='auto'):
-    if target == 'auto':
-      target = get_tpu_addr()
-    elif target is not None:
-      target = get_tpu_addr(target)
-    if target is not None:
-      print("Using TPU %s" % target)
-    return target
 
 def pretty(x, ellipsize=120):
   r = str(x)
