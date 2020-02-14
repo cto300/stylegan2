@@ -11,9 +11,11 @@ import tempfile
 import traceback
 import time
 
-from tensorflow.contrib import tpu
-from tensorflow.contrib.cluster_resolver import TPUClusterResolver
 from tensorflow.python.framework import dtypes
+from tensorflow.python.distribute.cluster_resolver import TPUClusterResolver as BaseTPUClusterResolver
+from tensorflow.python.training import server_lib
+from tensorflow.core.protobuf import rewriter_config_pb2
+from tensorflow.contrib import tpu
 
 import threading
 
@@ -46,6 +48,61 @@ if not hasattr(state, 'noisy'):
 
 if not hasattr(state, 'debug'):
   state.debug = 'DEBUG' in os.environ
+
+def reroute(addr, host=None):
+  if host is None or host is False:
+    return addr
+  if addr.startswith('grpc://'):
+    return 'grpc://' + reroute(addr[len('grpc://'):], host=host)
+  if not re.match('[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[:]8470', addr):
+    return addr
+  if not addr.endswith(':8470'):
+    return addr
+  a, b, c, d = [int(x) for x in addr.split(':')[0].split('.')]
+  if a == 10 and b in [48, 49]:
+    assert (d == 2)
+    port = b * 1000 + c
+  elif a == 10 and b in range(50, 60):
+    assert (c == 0)
+    port = b * 1000 + d
+  else:
+    return addr
+  return host + ':' + str(port)
+
+
+class TPUClusterResolver(BaseTPUClusterResolver):
+  def __init__(self, *args, host=None, **kws):
+    super(TPUClusterResolver, self).__init__(*args, **kws)
+    if host is None:
+      if 'TPU_HOST' in os.environ:
+        host = os.environ['TPU_HOST']
+    self._host = host
+
+  def master(self, *args, **kws):
+    ip = super(TPUClusterResolver, self).master(*args, **kws)
+    return reroute(ip, host=self._host)
+
+  def cluster_spec(self):
+    spec = super(TPUClusterResolver, self).cluster_spec()
+    r = dict()
+    for k, v in spec.as_dict().items():
+      r[k] = [reroute(ip, host=self._host) for ip in v]
+    return server_lib.ClusterSpec(r)
+
+def init_tpu(name, host=None, timeout_in_ms=600 * 60 * 1000):
+  tpu_init = [tpu.initialize_system()]
+  cluster_resolver = TPUClusterResolver(name, host=host)
+  config = tf.ConfigProto(operation_timeout_in_ms=timeout_in_ms,
+                          graph_options=tf.GraphOptions(
+                            rewrite_options=rewriter_config_pb2.RewriterConfig(
+                              disable_meta_optimizer=True)),
+                          isolate_session_state=True)
+  cluster_spec = cluster_resolver.cluster_spec()
+  if cluster_spec:
+    config.cluster_def.CopyFrom(cluster_spec.as_cluster_def())
+  init_sess = tf.Session(cluster_resolver.get_master(), config=config)
+  init_sess.run(tpu_init)
+  return init_sess, cluster_resolver
 
 def get_session(session=None):
   if session is None:
@@ -97,14 +154,14 @@ def get_cpus(session=None, devices=None):
   cpus = [x for x in devices if ':CPU:' in x.name]
   return cpus
 
-def get_tpu_addr(tpu_name=None):
-    # Get the TPU's location
-    if tpu_name is not None:
-      return TPUClusterResolver(tpu_name).get_master()
-    if 'COLAB_TPU_ADDR' in os.environ:
-      return TPUClusterResolver().get_master()
-    elif 'TPU_NAME' in os.environ:
-      return TPUClusterResolver(os.environ['TPU_NAME']).get_master()
+def get_tpu_resolver(tpu_name=None):
+  # Get the TPU's location
+  if tpu_name is not None:
+    return TPUClusterResolver(tpu_name)
+  if 'COLAB_TPU_ADDR' in os.environ:
+    return TPUClusterResolver()
+  elif 'TPU_NAME' in os.environ:
+    return TPUClusterResolver(os.environ['TPU_NAME'])
 
 def get_session_target(target='auto'):
     if target == 'auto':
@@ -123,12 +180,24 @@ def pretty(x, ellipsize=120):
 
 class Session(tf.Session):
   def __init__(self, target='auto', graph=None, config=None, init_tpu=False, id=None):
-    target = get_session_target(target)
+    if config is None:
+      config = tf.ConfigProto(operation_timeout_in_ms=6000 * 60 * 1000,
+                              graph_options=tf.GraphOptions(
+                                rewrite_options=rewriter_config_pb2.RewriterConfig(
+                                  disable_meta_optimizer=True)),
+                              isolate_session_state=True)
+    config.isolate_session_state = True
+    resolver = get_tpu_resolver(target)
+    if resolver is not None:
+      target = resolver.get_master()
+      cluster_spec = resolver.cluster_spec()
+      if cluster_spec:
+        config.cluster_def.CopyFrom(cluster_spec.as_cluster_def())
     super().__init__(target, graph=graph, config=config)
     self.id = id
-    self.init_tpu=init_tpu
-    self.target = target
-    self.config = config
+    self._tflex_resolver = resolver
+    self._tflex_target = target
+    self._tflex_config = config
 
   @property
   def _spec(self):
@@ -138,7 +207,7 @@ class Session(tf.Session):
     if self.init_tpu:
       print(self._spec, "Initializing TPU...")
       #sess.run(tpu.initialize_system())
-      initialize_tpu(session=self, timeout_in_ms=20000)
+      init_tpu(session=self, timeout_in_ms=20000)
       self.init_tpu = None
 
   def run(self, *args, **kws):
