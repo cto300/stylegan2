@@ -502,7 +502,7 @@ def G_synthesis_stylegan2(
             x = block(x, res)
             if 2**res == 64:
                 print('Adding self-attention block to generator')
-                x = non_local_block(x, "SelfAtten", use_sn=False)
+                x = non_local_block(x, "SelfAtten", use_sn=True)
             if architecture == 'skip':
                 y = upsample(y)
             if architecture == 'skip' or res == resolution_log2:
@@ -675,7 +675,7 @@ def D_stylegan2(
                 x = fromrgb(x, y, res)
             if 2**res == 64:
                 print('Adding self-attention block to discriminator')
-                x = non_local_block(x, "SelfAtten", use_sn=False)
+                x = non_local_block(x, "SelfAtten", use_sn=True)
             x = block(x, res)
             if architecture == 'skip':
                 y = downsample(y)
