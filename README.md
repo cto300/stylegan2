@@ -1,6 +1,16 @@
 ![Teaser image](./fake_art_portrait.jpg)
 
-**Various Improvements to make StyleGAN2 more suitible to be trained on Google Colab**
+* Conditional model trained on WikiArt images [now available for download](https://archive.org/details/wikiart-stylegan2-conditional-model)
+* Take a look at the included notebooks for examples
+* Conditional support originally from @davidstap
+* port of my encoder from @robertluxemburg
+* fp16 branch from @veqtor
+* tpu and swarm branches from @shawwn
+* runwayml support from @genekogan
+
+<a href="https://open-app.runwayml.com/?model=pbaylies/stylegan2" target="_blank"><img src="https://open-app.runwayml.com/gh-badge.svg" /></a>
+
+**Various Improvements from skyflynil to make StyleGAN2 more suitible to be trained on Google Colab**
 * Supports Non-Square images, for example, 768x512, which basically as 6x4 (x2^7), or 640x384 as 5x3 (x2^7), etc.
 * Supports vertical mirror augmentation
 * Supports train from latest pkl automatically
@@ -88,6 +98,7 @@ This is an experimental port of [pbaylies/stylegan-encoder](https://github.com/p
 To test this, try out the notebook.
 
 ### Original Readme
+
 ![Teaser image](./docs/stylegan2-teaser-1024x256.png)
 
 **Analyzing and Improving the Image Quality of StyleGAN**<br>
