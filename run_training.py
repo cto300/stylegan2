@@ -33,7 +33,7 @@ _valid_configs = [
 
 #----------------------------------------------------------------------------
 
-def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, mirror_augment, mirror_augment_v, metrics, min_h, min_w, res_log2, lr, cond):
+def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, mirror_augment, mirror_augment_v, metrics, min_h, min_w, res_log2, lr, cond, resume_pkl, resume_kimg):
     train     = EasyDict(run_func_name='training.training_loop.training_loop') # Options for training loop.
     G         = EasyDict(func_name='training.networks_stylegan2.G_main')       # Options for generator network.
     D         = EasyDict(func_name='training.networks_stylegan2.D_stylegan2')  # Options for discriminator network.
@@ -127,6 +127,7 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     kwargs = EasyDict(train)
     kwargs.update(G_args=G, D_args=D, G_opt_args=G_opt, D_opt_args=D_opt, G_loss_args=G_loss, D_loss_args=D_loss)
     kwargs.update(dataset_args=dataset_args, sched_args=sched, grid_args=grid, metric_arg_list=metrics, tf_config=tf_config)
+    kwargs.update(resume_pkl=resume_pkl, resume_kimg=resume_kimg)
     kwargs.submit_config = copy.deepcopy(sc)
     kwargs.submit_config.run_dir_root = result_dir
     kwargs.submit_config.run_desc = desc
@@ -187,6 +188,8 @@ def main():
     parser.add_argument('--res-log2', help='multiplier for image size, the training image size (height, width) should be (min_h * 2**res_log2, min_w * 2**res_log2)', default=4, type=int)
     parser.add_argument('--lr', help='base learning rate', default=0.003, type=float)
     parser.add_argument('--cond', help='conditional model', default=False, metavar='BOOL', type=_str_to_bool)
+    parser.add_argument('--resume-pkl', help='pkl to resume training from: None)', default=None, type=str)
+    parser.add_argument('--resume-kimg', help='kimg to resume training from" (default: 0)', default=0, type=int)
 
     args = parser.parse_args()
 
@@ -211,4 +214,5 @@ if __name__ == "__main__":
     main()
 
 #----------------------------------------------------------------------------
+
 
