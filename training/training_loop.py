@@ -14,6 +14,7 @@ import tflex
 import time
 import dnnlib
 import dnnlib.tflib as tflib
+import traceback
 from dnnlib.tflib.autosummary import autosummary
 
 from training import dataset
@@ -159,7 +160,7 @@ def training_loop(
         resume_time = float(os.environ['RESUME_TIME'])
 
     # Initialize dnnlib and TensorFlow.
-    tflib.init_tf(tf_config)
+    #tflib.init_tf(tf_config)
     num_gpus = dnnlib.submit_config.num_gpus
 
     # Load training set.
@@ -203,11 +204,11 @@ def training_loop(
     G.print_layers(); D.print_layers()
     sched = training_schedule(cur_nimg=total_kimg*1000, training_set=training_set, **sched_args)
     grid_latents = np.random.randn(np.prod(grid_size), *G.input_shape[1:])
-    grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
-    misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.jpg'), drange=drange_net, grid_size=grid_size)
+    #grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, randomize_noise=False, minibatch_size=sched.minibatch_gpu)
+    #misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes_init.png'), drange=drange_net, grid_size=grid_size)
 
     def save_image_grid(latents, grid_size, filename):
-        grid_fakes = Gs.run(latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
+        grid_fakes = Gs.run(latents, grid_labels, is_validation=True, randomize_noise=False, minibatch_size=sched.minibatch_gpu)
         misc.save_image_grid(grid_fakes, filename, drange=drange_net, grid_size=grid_size)
 
     tflex.save_image_grid = save_image_grid
@@ -398,11 +399,12 @@ def training_loop(
         if cur_tick < 0 or cur_nimg >= tick_start_nimg + sched.tick_kimg * 1000 or done:
             cur_tick += 1
             tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
-            tick_start_nimg = cur_nimg
             tick_time = dnnlib.RunContext.get().get_time_since_last_update()
-            total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
 
             def report_progress_command():
+                total_time = dnnlib.RunContext.get().get_time_since_start() + resume_time
+                tick_kimg = (cur_nimg - tick_start_nimg) / 1000.0
+                tick_time = dnnlib.RunContext.get().get_time_since_last_update()
                 print('tick %-5d kimg %-8.1f lod %-5.2f minibatch %-4d time %-12s sec/tick %-7.1f sec/kimg %-7.2f maintenance %-6.1f gpumem %.1f' % (
                     autosummary('Progress/tick', cur_tick),
                     autosummary('Progress/kimg', cur_nimg / 1000.0),
@@ -435,21 +437,25 @@ def training_loop(
             def save():
                 tflex.save_command()
 
-            # Report progress.
-            tflex.report_progress_command()
+            try:
+              # Report progress.
+              tflex.report_progress_command()
+              tick_start_nimg = cur_nimg
 
-            # Save snapshots.
-            if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
-                grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, minibatch_size=sched.minibatch_gpu)
-                misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.jpg' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
-            if network_snapshot_ticks is not None and (cur_tick % network_snapshot_ticks == 0 or done):
-                tflex.save_command()
+              # Save snapshots.
+              if image_snapshot_ticks is not None and (cur_tick % image_snapshot_ticks == 0 or done):
+                  grid_fakes = Gs.run(grid_latents, grid_labels, is_validation=True, randomize_noise=False, minibatch_size=sched.minibatch_gpu)
+                  misc.save_image_grid(grid_fakes, dnnlib.make_run_dir_path('fakes%06d.png' % (cur_nimg // 1000)), drange=drange_net, grid_size=grid_size)
+              if network_snapshot_ticks is not None and cur_tick > 0 and (cur_tick % network_snapshot_ticks == 0 or done):
+                  tflex.save_command()
 
-            # Update summaries and RunContext.
-            metrics.update_autosummaries()
-            tflib.autosummary.save_summaries(summary_log, cur_nimg)
-            dnnlib.RunContext.get().update('%.2f' % sched.lod, cur_epoch=cur_nimg // 1000, max_epoch=total_kimg)
-            maintenance_time = dnnlib.RunContext.get().get_last_update_interval() - tick_time
+              # Update summaries and RunContext.
+              metrics.update_autosummaries()
+              tflib.autosummary.save_summaries(summary_log, cur_nimg)
+              dnnlib.RunContext.get().update('%.2f' % sched.lod, cur_epoch=cur_nimg // 1000, max_epoch=total_kimg)
+              maintenance_time = dnnlib.RunContext.get().get_last_update_interval() - tick_time
+            except:
+              traceback.print_exc()
 
     # Save final snapshot.
     misc.save_pkl((G, D, Gs), dnnlib.make_run_dir_path('network-final.pkl'))

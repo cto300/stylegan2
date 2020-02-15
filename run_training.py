@@ -56,8 +56,8 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     train.network_snapshot_ticks = 1
     sched.D_lrate_base = lr
     sched.G_lrate_base = 0.5 * sched.D_lrate_base # two time update rule enforced
-    sched.minibatch_size_base = 192
-    sched.minibatch_gpu_base = 3
+    sched.minibatch_size_base = 32
+    sched.minibatch_gpu_base = 4
     D_loss.gamma = 10
     metrics = [metric_defaults[x] for x in metrics]
     desc = 'stylegan2'
@@ -67,7 +67,8 @@ def run(dataset, data_dir, result_dir, config_id, num_gpus, total_kimg, gamma, m
     G.min_h = D.min_h = dataset_args.min_h = min_h
     G.min_w = D.min_w = dataset_args.min_w = min_w
     G.res_log2 = D.res_log2 = dataset_args.res_log2 = res_log2
-    assert num_gpus in [1, 2, 4, 8]
+
+    assert num_gpus in [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192]
     sc.num_gpus = num_gpus
     desc += '-%dgpu' % num_gpus
 

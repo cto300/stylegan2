@@ -11,9 +11,11 @@ import tempfile
 import traceback
 import time
 
-from tensorflow.contrib import tpu
-from tensorflow.contrib.cluster_resolver import TPUClusterResolver
 from tensorflow.python.framework import dtypes
+from tensorflow.python.distribute.cluster_resolver import TPUClusterResolver as BaseTPUClusterResolver
+from tensorflow.python.training import server_lib
+from tensorflow.core.protobuf import rewriter_config_pb2
+from tensorflow.contrib import tpu
 
 import threading
 
@@ -47,23 +49,119 @@ if not hasattr(state, 'noisy'):
 if not hasattr(state, 'debug'):
   state.debug = 'DEBUG' in os.environ
 
-def get_tpu_addr(tpu_name=None):
-    # Get the TPU's location
-    if tpu_name is not None:
-      return TPUClusterResolver(tpu_name).get_master()
-    if 'COLAB_TPU_ADDR' in os.environ:
-      return TPUClusterResolver().get_master()
-    elif 'TPU_NAME' in os.environ:
-      return TPUClusterResolver(os.environ['TPU_NAME']).get_master()
+def reroute(addr, host=None):
+  if host is None or host is False:
+    return addr
+  if addr.startswith('grpc://'):
+    return 'grpc://' + reroute(addr[len('grpc://'):], host=host)
+  if not re.match('[0-9]+[.][0-9]+[.][0-9]+[.][0-9]+[:]8470', addr):
+    return addr
+  if not addr.endswith(':8470'):
+    return addr
+  a, b, c, d = [int(x) for x in addr.split(':')[0].split('.')]
+  if a == 10 and b in [48, 49]:
+    assert (d == 2)
+    port = b * 1000 + c
+  elif a == 10 and b in range(50, 60):
+    assert (c == 0)
+    port = b * 1000 + d
+  else:
+    return addr
+  return host + ':' + str(port)
 
-def get_session_target(target='auto'):
-    if target == 'auto':
-      target = get_tpu_addr()
-    elif target is not None:
-      target = get_tpu_addr(target)
-    if target is not None:
-      print("Using TPU %s" % target)
-    return target
+
+class TPUClusterResolver(BaseTPUClusterResolver):
+  def __init__(self, *args, host=None, **kws):
+    super(TPUClusterResolver, self).__init__(*args, **kws)
+    if host is None:
+      if 'TPU_HOST' in os.environ:
+        host = os.environ['TPU_HOST']
+    self._host = host
+
+  def master(self, *args, **kws):
+    ip = super(TPUClusterResolver, self).master(*args, **kws)
+    return reroute(ip, host=self._host)
+
+  def cluster_spec(self):
+    spec = super(TPUClusterResolver, self).cluster_spec()
+    r = dict()
+    for k, v in spec.as_dict().items():
+      r[k] = [reroute(ip, host=self._host) for ip in v]
+    return server_lib.ClusterSpec(r)
+
+def init_tpu(name, host=None, timeout_in_ms=600 * 60 * 1000):
+  tpu_init = [tpu.initialize_system()]
+  cluster_resolver = TPUClusterResolver(name, host=host)
+  config = tf.ConfigProto(operation_timeout_in_ms=timeout_in_ms,
+                          graph_options=tf.GraphOptions(
+                            rewrite_options=rewriter_config_pb2.RewriterConfig(
+                              disable_meta_optimizer=True)),
+                          isolate_session_state=True)
+  cluster_spec = cluster_resolver.cluster_spec()
+  if cluster_spec:
+    config.cluster_def.CopyFrom(cluster_spec.as_cluster_def())
+  init_sess = tf.Session(cluster_resolver.get_master(), config=config)
+  init_sess.run(tpu_init)
+  return init_sess, cluster_resolver
+
+def get_session(session=None):
+  if session is None:
+    session = tf.get_default_session()
+  return session
+
+def get_devices(session=None):
+  session = get_session(session)
+  if hasattr(session, '_cached_devices'):
+    devices = session._cached_devices
+  else:
+    devices = session._cached_devices = session.list_devices()
+  return devices
+
+def has_gpu(session=None):
+  session = get_session(session)
+  if hasattr(session, '_has_gpu'):
+    result = session._has_gpu
+  else:
+    devices = get_devices(session=session)
+    result = session._has_gpu = len([x for x in devices if ':GPU:' in x.name]) > 0
+  return result
+
+def has_tpu(session=None):
+  session = get_session(session)
+  if hasattr(session, '_has_tpu'):
+    result = session._has_tpu
+  else:
+    devices = get_devices(session=session)
+    result = session._has_tpu = len([x for x in devices if ':TPU:' in x.name]) > 0
+  return result
+
+def get_cores_from_devices(devices):
+  cores = [x for x in devices if ':TPU:' in x.name]
+  if len(cores) <= 0:
+    cores = [x for x in devices if ':GPU:' in x.name]
+  if len(cores) <= 0:
+    cores = [x for x in devices if ':CPU:' in x.name]
+  return cores
+
+def get_cores(session=None, devices=None):
+  if devices is None:
+    devices = get_devices(session=session)
+  return get_cores_from_devices(devices)
+
+def get_cpus(session=None, devices=None):
+  if devices is None:
+    devices = get_devices(session=session)
+  cpus = [x for x in devices if ':CPU:' in x.name]
+  return cpus
+
+def get_tpu_resolver(tpu_name='auto'):
+  # Get the TPU's location
+  if tpu_name != 'auto':
+    return TPUClusterResolver(tpu_name)
+  elif 'COLAB_TPU_ADDR' in os.environ:
+    return TPUClusterResolver()
+  elif 'TPU_NAME' in os.environ:
+    return TPUClusterResolver(os.environ['TPU_NAME'])
 
 def pretty(x, ellipsize=120):
   r = str(x)
@@ -72,30 +170,47 @@ def pretty(x, ellipsize=120):
   return r
 
 class Session(tf.Session):
-  def __init__(self, target='auto', graph=None, config=None, init_tpu=False):
-    target = get_session_target(target)
+  def __init__(self, target='auto', graph=None, config=None, init_tpu=False, id=None):
+    if config is None:
+      config = tf.ConfigProto(operation_timeout_in_ms=6000 * 60 * 1000,
+                              graph_options=tf.GraphOptions(
+                                rewrite_options=rewriter_config_pb2.RewriterConfig(
+                                  disable_meta_optimizer=True)),
+                              isolate_session_state=True)
+    config.isolate_session_state = True
+    resolver = get_tpu_resolver(target)
+    if resolver is not None:
+      target = resolver.get_master()
+      cluster_spec = resolver.cluster_spec()
+      if cluster_spec:
+        config.cluster_def.CopyFrom(cluster_spec.as_cluster_def())
     super().__init__(target, graph=graph, config=config)
-    self.init_tpu=init_tpu
-    self.target = target
-    self.config = config
+    self.id = id
+    self._tflex_resolver = resolver
+    self._tflex_target = target
+    self._tflex_config = config
+
+  @property
+  def _spec(self):
+    return '#%d' % self.id if self.id is not None else ''
 
   def ensure(self):
     if self.init_tpu:
-      print("Initializing TPU...")
+      print(self._spec, "Initializing TPU...")
       #sess.run(tpu.initialize_system())
-      initialize_tpu(session=self, timeout_in_ms=20000)
+      init_tpu(session=self, timeout_in_ms=20000)
       self.init_tpu = None
 
   def run(self, *args, **kws):
     if state.debug:
       check_commands()
     if state.noisy:
-      print('Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+      print(self._spec, 'Session.run', *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
     start = time.time()
     result = super(Session, self).run(*args, **kws)
     elapsed = time.time() - start
     if state.noisy:
-      print('Session.run (finished in %.2fs)' % elapsed, pretty(result), *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
+      print(self._spec, 'Session.run (finished in %.2fs)' % elapsed, pretty(result), *[pretty(x) for x in args], *[pretty(k)+'='+pretty(v) for k, v in kws.items()])
     return result
 
 
@@ -633,18 +748,47 @@ from contextlib import contextmanager
 def nullcontext(enter_result=None):
     yield enter_result
 
-_devices = None
-_has_gpu = False
+def set_override_device(value, session=None):
+  session = get_session(session)
+  session._override_device = value
+  return value
 
-def has_gpu():
-  global _devices
-  global _has_gpu
-  if _devices is None:
-    _devices = tf.get_default_session().list_devices()
-    _has_gpu = len([x.name for x in _devices if ':GPU' in x.name]) > 0
-  return _has_gpu
+def has_override_device(session=None):
+  session = get_session(session)
+  return hasattr(session, '_override_device')
+
+def get_override_device(session=None):
+  session = get_session(session)
+  if hasattr(session, '_override_device'):
+    return session._override_device
+
+def set_override_cores(value, session=None):
+  session = get_session(session)
+  session._override_cores = value
+  return value
+
+def has_override_cores(session=None):
+  session = get_session(session)
+  return hasattr(session, '_override_cores')
+
+def get_override_cores(session=None):
+  session = get_session(session)
+  if hasattr(session, '_override_cores'):
+    return session._override_cores
 
 def device(name=''):
+  if has_override_device():
+    return nullcontext()
+  if has_override_cores():
+    if name is None:
+      return tf.device(name)
+    if name.startswith('/gpu:'):
+      i = int(name.split(':', 1)[-1])
+      return tf.device(get_cores()[i].name)
+    if name.startswith('/cpu:'):
+      i = int(name.split(':', 1)[-1])
+      return tf.device(get_cpus()[i].name)
+    return nullcontext()
   if name is None:
     return tf.device(None)
   if 'gpu' in name:
@@ -653,4 +797,3 @@ def device(name=''):
   if 'cpu' in name:
     return tf.device(name)
   return nullcontext()
-

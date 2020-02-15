@@ -18,6 +18,10 @@ import shutil
 import sys
 import time
 import traceback
+import threading
+import dnnlib.tflib as tflib
+import tflex
+import tensorflow as tf
 
 from enum import Enum
 
@@ -270,11 +274,50 @@ def run_wrapper(submit_config: SubmitConfig) -> None:
 
         run_func_obj = util.get_obj_by_name(submit_config.run_func_name)
         assert callable(run_func_obj)
-        sig = inspect.signature(run_func_obj)
-        if 'submit_config' in sig.parameters:
-            run_func_obj(submit_config=submit_config, **submit_config.run_func_kwargs)
+        def thunk():
+            sig = inspect.signature(run_func_obj)
+            if 'submit_config' in sig.parameters:
+                run_func_obj(submit_config=submit_config, **submit_config.run_func_kwargs)
+            else:
+                run_func_obj(**submit_config.run_func_kwargs)
+
+        kws = submit_config.run_func_kwargs
+        tf_config = kws['tf_config'] if 'tf_config' in kws else {}
+        if 'TPU_NAME' not in os.environ or 'NO_SWARM' in os.environ:
+            tflib.init_tf(tf_config)
+            thunk()
         else:
-            run_func_obj(**submit_config.run_func_kwargs)
+            threads = []
+            tflex.trainers = []
+            tpu_core_count = 1 if 'TPU_CORE_COUNT' not in os.environ else int(os.environ['TPU_CORE_COUNT'])
+            tpu_core_offset = 0 if 'TPU_CORE_OFFSET' not in os.environ else int(os.environ['TPU_CORE_OFFSET'])
+            for i in range(tpu_core_count):
+                def worker(i):
+                    _id = i + tpu_core_offset
+                    spec = '#%d' % _id
+                    print(spec, 'Initializing...')
+                    tflib.init_tf(tf_config)
+                    sess = tf.get_default_session()
+                    cores = tflex.get_cores()[tpu_core_offset:tpu_core_offset+tpu_core_count]
+                    sess.id = _id
+                    tflex.trainers.append(sess)
+                    if False:
+                      tflex.set_override_device(cores[i])
+                      with tf.device(cores[i]):
+                          print(spec, 'Running thunk...')
+                          thunk()
+                    else:
+                      tflex.set_override_cores(cores)
+                      print(spec, 'Running thunk...')
+                      thunk()
+                if tpu_core_count <= 1:
+                  worker(i)
+                else:
+                  thread = threading.Thread(target=worker, args=(i,))
+                  threads.append(thread)
+                  thread.start()
+            for thread in threads:
+                thread.join()
 
         print("dnnlib: Finished {0}() in {1}.".format(submit_config.run_func_name, util.format_time(time.time() - start_time)))
     except:

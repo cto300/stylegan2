@@ -26,6 +26,52 @@ except:
     # Older TensorFlow versions
     import tensorflow.contrib.nccl as nccl_ops
 
+from tensorflow.python.framework import ops as tf_ops
+
+def all_sum_plain(g, colocate=False, *args, **kws):
+  r = []
+  for i in range(len(g)):
+    if colocate:
+      with tf_ops.colocate_with(g[i]):
+        r.append(tf.add_n(g))
+    else:
+      r.append(tf.add_n(g))
+  return r
+
+try:
+    # TensorFlow 1.13
+    from tensorflow.python.ops import nccl_ops
+except:
+    # Older TensorFlow versions
+    import tensorflow.contrib.nccl as nccl_ops
+
+def all_sum_gpu(g, *args, **kws):
+  return nccl_ops.all_sum(g, *args, **kws)
+
+from tensorflow.python.tpu.ops import tpu_ops
+
+#def all_sum_tpu(g, *args, **kws):
+#  g = tpu_ops.cross_replica_sum(g, *args, **kws)
+#  return [g[i] for i in range(shape_list(g)[0])]
+
+def all_sum_tpu(g, colocate=True, *args, **kws):
+  #import pdb
+  #pdb.set_trace()
+  #r = tf.reduce_sum(g)
+  #r = tf.reduce_sum(tf.stack(g), axis=0, keepdims=True)
+  #r = tpu_ops.cross_replica_sum(g, *args, **kws)
+  #r = [r[i] for i in range(shape_list(r)[0])]
+  return all_sum_plain(g, colocate=colocate, *args, **kws)
+
+def all_sum(cores, g, colocate=True, *args, **kws):
+  if any([':TPU:' in x for x in cores.keys()]):
+    return all_sum_tpu(g, colocate=colocate, *args, **kws)
+  elif any([':GPU:' in x for x in cores.keys()]):
+    return all_sum_gpu(g, *args, **kws)
+  else:
+    return all_sum_cpu(g, *args, **kws)
+
+
 class Optimizer:
     """A Wrapper for tf.train.Optimizer.
 
@@ -197,7 +243,7 @@ class Optimizer:
                 for all_vars in zip(*[device.grad_clean.keys() for device in self._devices.values()]):
                     if len(all_vars) > 0 and all(dim > 0 for dim in all_vars[0].shape.as_list()): # NCCL does not support zero-sized tensors.
                         all_grads = [device.grad_clean[var] for device, var in zip(self._devices.values(), all_vars)]
-                        all_grads = nccl_ops.all_sum(all_grads)
+                        all_grads = all_sum(self._devices, all_grads)
                         for device, var, grad in zip(self._devices.values(), all_vars, all_grads):
                             device.grad_clean[var] = grad
 
